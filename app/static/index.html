@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Africa Water Intelligence Platform</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>Africa Water Intelligence Platform</h1>
+        <p>Flood, sediment, chlorophyll, soil moisture, drought, and glacier intelligence</p>
+      </div>
+
+      <div class="toolbar">
+        <button id="pointModeBtn" class="btn active">Point inspect</button>
+        <button id="aoiModeBtn" class="btn">Draw AOI</button>
+        <button id="clearBtn" class="btn secondary">Clear</button>
+      </div>
+
+      <div id="status" class="status-card">Click a point or draw a polygon AOI.</div>
+
+      <div id="summary" class="card"></div>
+      <div id="areaStats" class="card"></div>
+      <section id="moduleGrid" class="module-grid"></section>
+
+      <div class="card">
+        <h3>Layer Toggles</h3>
+        <div id="layerToggles" class="toggles"></div>
+      </div>
+
+      <div id="timeline" class="card"></div>
+      <div id="flags" class="card"></div>
+      <div class="card">
+        <h3>Workflow</h3>
+        <ol class="workflow-list">
+          <li>User adds project location or polygon</li>
+          <li>System fetches satellite data for that area</li>
+          <li>Analysis algorithms process the imagery</li>
+          <li>Platform calculates changes and risks</li>
+          <li>Dashboard shows maps, alerts, reports, and statistics</li>
+        </ol>
+      </div>
+      <div id="sources" class="card"></div>
+      <div id="methodology" class="card"></div>
+
+      <div class="card">
+        <h3>Download GeoTIFF</h3>
+        <div class="downloads">
+          <button class="btn download" data-layer="flood">Flood</button>
+          <button class="btn download" data-layer="turbidity">Turbidity</button>
+          <button class="btn download" data-layer="chlorophyll">Chlorophyll</button>
+          <button class="btn download" data-layer="water_quality">Water quality</button>
+          <button class="btn download" data-layer="soil_moisture">Soil moisture</button>
+          <button class="btn download" data-layer="drought">Drought</button>
+          <button class="btn download" data-layer="glacier">Glacier</button>
+        </div>
+      </div>
+
+      <div class="card meta">
+        Drawn AOIs are validated and repaired server-side before Earth Engine analysis.
+      </div>
+    </aside>
+
+    <main id="map"></main>
+  </div>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

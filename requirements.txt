@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.8
+pydantic-settings>=2.5
+python-dotenv
+requests
+cachetools
+shapely>=2.0
+pyproj>=3.6
+earthengine-api
+pystac-client
+planetary-computer

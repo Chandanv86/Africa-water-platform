@@ -1,0 +1,150 @@
+:root {
+  --bg: #111315;
+  --panel: #171b20;
+  --panel-soft: #1f252b;
+  --tile: #252b31;
+  --text: #eef4f0;
+  --muted: #aeb8b2;
+  --accent: #5fb3ff;
+  --border: rgba(255,255,255,0.12);
+  --success: #67e8a6;
+  --warn: #ffd166;
+  --danger: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-shell { display: flex; height: 100vh; width: 100vw; }
+.sidebar {
+  width: 460px;
+  min-width: 460px;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.brand h1 { margin: 0 0 6px 0; font-size: 22px; letter-spacing: 0; }
+.brand p { margin: 0 0 12px 0; color: var(--muted); font-size: 13px; }
+
+.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
+.status-card, .card, .module-card {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.card:empty, .module-grid:empty { display: none; }
+.card h3, .module-card h3 { margin: 0 0 8px 0; font-size: 15px; letter-spacing: 0; }
+.card p, .card li, .card div { color: var(--text); font-size: 14px; line-height: 1.45; }
+.meta { color: var(--muted); font-size: 13px; }
+.error { color: var(--danger); }
+
+#map { flex: 1; height: 100vh; }
+
+.btn {
+  appearance: none;
+  border: 1px solid rgba(95,179,255,0.38);
+  background: rgba(95,179,255,0.14);
+  color: #e8f5ff;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.btn:hover { filter: brightness(1.1); }
+.btn.active { background: rgba(103,232,166,0.18); border-color: rgba(103,232,166,0.55); }
+.btn.secondary { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.16); }
+.btn.download { width: 100%; margin-bottom: 8px; text-align: left; text-transform: capitalize; }
+.btn:disabled { cursor: wait; opacity: 0.65; }
+
+.badge {
+  display: inline-block;
+  margin: 4px 6px 4px 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255,209,102,0.15);
+  border: 1px solid rgba(255,209,102,0.35);
+  color: #fff2c4;
+  font-size: 12px;
+}
+
+.kpi {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.kpi.compact { grid-template-columns: 1fr 1fr; margin-top: 10px; }
+.kpi .tile {
+  background: var(--tile);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px;
+  min-width: 0;
+}
+.kpi .label { color: var(--muted); font-size: 12px; }
+.kpi .value {
+  font-size: 15px;
+  margin-top: 3px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.module-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px; }
+.module-card { margin-bottom: 0; }
+.module-card.low { border-left: 3px solid var(--success); }
+.module-card.moderate { border-left: 3px solid var(--warn); }
+.module-card.high { border-left: 3px solid var(--danger); }
+.module-head { display: flex; align-items: center; gap: 8px; }
+.module-head h3 { flex: 1; margin: 0; }
+.module-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+.module-copy { color: var(--text); font-size: 13px; margin-top: 8px; }
+.module-source { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.module-chart-wrap {
+  height: 120px;
+  margin-top: 10px;
+  padding: 6px;
+  background: rgba(0,0,0,0.14);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.status-pill {
+  color: var(--muted);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 6px;
+}
+
+.toggles { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.toggle-row { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
+.toggle-row input { accent-color: var(--accent); }
+
+.downloads { display: grid; gap: 2px; }
+.source-row { margin-bottom: 10px; }
+.chart-wrap { height: 260px; }
+.small-note { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.4; }
+.workflow-list { margin: 0; padding-left: 18px; }
+.workflow-list li { margin: 6px 0; }
+
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: #f8fbfa;
+  color: #17201c;
+}
+
+@media (max-width: 900px) {
+  .app-shell { flex-direction: column; }
+  .sidebar { width: 100%; min-width: 0; height: 48vh; }
+  #map { height: 52vh; }
+  .kpi { grid-template-columns: 1fr; }
+}
