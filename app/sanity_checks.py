@@ -42,10 +42,12 @@ def run() -> dict:
         "/water/inspect",
         "/water/timeline",
         "/aoi/analyze",
+        "/aoi/agriculture/analyze",
         "/aoi/tif",
         "/tif/export",
         "/api/v1/water/inspect",
         "/api/v1/aoi/analyze",
+        "/api/v1/aoi/agriculture/analyze",
     }:
         assert route in routes, f"Missing route: {route}"
 

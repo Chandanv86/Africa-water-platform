@@ -148,3 +148,76 @@ html, body {
   #map { height: 52vh; }
   .kpi { grid-template-columns: 1fr; }
 }
+
+/* Agriculture panel */
+.agri-panel { margin-top: 16px; }
+.agri-panel h2 {
+  font-size: 18px;
+  margin: 0 0 12px 0;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.agri-section {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.agri-section h3 { margin: 0 0 4px 0; font-size: 15px; }
+.agri-section .agri-desc { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.agri-section .agri-source { color: var(--muted); font-size: 12px; margin-bottom: 8px; font-style: italic; }
+.agri-chart-wrap {
+  height: 160px;
+  margin-top: 10px;
+  padding: 6px;
+  background: rgba(0,0,0,0.14);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.agri-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.confidence-badge, .coverage-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.confidence-badge {
+  background: rgba(95,179,255,0.15);
+  border: 1px solid rgba(95,179,255,0.4);
+  color: #b8dfff;
+}
+.coverage-badge {
+  background: rgba(103,232,166,0.15);
+  border: 1px solid rgba(103,232,166,0.4);
+  color: #b8f5d5;
+}
+
+/* IPC phase colors */
+.ipc-1 { background: #c6efce; color: #1a3d1a; }
+.ipc-2 { background: #ffeb9c; color: #5a4b00; }
+.ipc-3 { background: #f4b084; color: #5a2800; }
+.ipc-4 { background: #ff6b6b; color: #fff; }
+.ipc-5 { background: #7c0a02; color: #fff; }
+.ipc-na { background: var(--tile); color: var(--muted); }
+
+.ipc-timeline { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 8px; }
+.ipc-block {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  min-width: 54px;
+}
+.ipc-block .ipc-year { font-size: 10px; font-weight: 400; display: block; margin-bottom: 2px; }
+
+.agri-unavailable {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+}

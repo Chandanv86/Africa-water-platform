@@ -90,6 +90,8 @@ map.addControl(drawControl);
 let clickMarker = null;
 let chart = null;
 let moduleCharts = [];
+let agriCharts = [];
+let agricultureRequestToken = 0;
 let currentAoiGeoJson = null;
 let mode = "point";
 let lastPoint = null;
@@ -103,6 +105,7 @@ const flagsEl = document.getElementById("flags");
 const sourcesEl = document.getElementById("sources");
 const methodologyEl = document.getElementById("methodology");
 const moduleGridEl = document.getElementById("moduleGrid");
+const agriculturePanelEl = document.getElementById("agriculturePanel");
 const layerTogglesEl = document.getElementById("layerToggles");
 
 const pointModeBtn = document.getElementById("pointModeBtn");
@@ -483,9 +486,12 @@ function renderMapOverlays(data) {
 }
 
 function clearCards() {
+  agricultureRequestToken += 1;
   moduleCharts.forEach(item => item.destroy());
   moduleCharts = [];
-  [summaryEl, areaStatsEl, moduleGridEl, timelineEl, flagsEl, sourcesEl, methodologyEl, layerTogglesEl]
+  agriCharts.forEach(item => item.destroy());
+  agriCharts = [];
+  [summaryEl, areaStatsEl, moduleGridEl, agriculturePanelEl, timelineEl, flagsEl, sourcesEl, methodologyEl, layerTogglesEl]
     .forEach(el => el.innerHTML = "");
   intelligenceLayers.clearLayers();
 }
@@ -543,6 +549,9 @@ async function loadAoiAnalysis(geojson, label) {
   statusEl.innerHTML = `AOI analysis complete for <b>${label || "selected area"}</b>`;
   currentAoiGeoJson = { type: data.geometry.type, coordinates: data.geometry.coordinates };
   renderAll(data);
+
+  // Agriculture analysis — fire after water, never blocks water UI
+  loadAgricultureAnalysis(geojson, label);
 }
 
 pointModeBtn.addEventListener("click", () => setMode("point"));
@@ -636,3 +645,218 @@ downloadButtons.forEach(btn => {
 });
 
 setMode("point");
+
+/* ───────────────────────────────────────────────────────────────────────
+   Agriculture / food-security dashboard
+   ─────────────────────────────────────────────────────────────────────── */
+
+const IPC_COLORS = { 1: "#c6efce", 2: "#ffeb9c", 3: "#f4b084", 4: "#ff6b6b", 5: "#7c0a02" };
+const IPC_TEXT   = { 1: "#1a3d1a", 2: "#5a4b00", 3: "#5a2800", 4: "#fff",    5: "#fff" };
+const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function statusPill(s) {
+  const cls = s === "ok" ? "success" : s === "partial" ? "warn" : "muted";
+  return `<span class="status-pill" style="border-color:var(--${cls === "muted" ? "border" : cls})">${s}</span>`;
+}
+
+async function loadAgricultureAnalysis(geojson, label) {
+  const requestToken = ++agricultureRequestToken;
+  agriculturePanelEl.innerHTML = `<h2>Agriculture &amp; Food Security</h2><div class="agri-unavailable">Loading agriculture analytics…</div>`;
+  try {
+    const res = await fetch(api("/aoi/agriculture/analyze?year_start=2022&year_end=2025"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ geometry: geojson, label: label || "AOI", buffer_km: 5 }),
+    });
+    if (requestToken !== agricultureRequestToken) return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      agriculturePanelEl.innerHTML = `<h2>Agriculture &amp; Food Security</h2><div class="agri-unavailable">Agriculture analysis unavailable: ${err.detail || res.statusText}</div>`;
+      return;
+    }
+    const data = await res.json();
+    if (requestToken !== agricultureRequestToken) return;
+    renderAgriculturePanel(data);
+  } catch (e) {
+    if (requestToken !== agricultureRequestToken) return;
+    agriculturePanelEl.innerHTML = `<h2>Agriculture &amp; Food Security</h2><div class="agri-unavailable">Agriculture request failed: ${e.message}</div>`;
+  }
+}
+
+function renderAgriculturePanel(d) {
+  agriCharts.forEach(c => c.destroy());
+  agriCharts = [];
+
+  const s = d.summary || {};
+  let html = `<h2>Agriculture &amp; Food Security</h2>`;
+
+  // Summary card
+  html += `<div class="agri-section">
+    <h3>Summary</h3>
+    <div class="kpi compact">
+      ${kpi("Cropland", s.latest_cropland_km2 != null ? s.latest_cropland_km2 + " km²" : "N/A")}
+      ${kpi("Trend", s.cropland_trend || "N/A")}
+      ${kpi("Food Security", s.latest_food_label || "N/A")}
+      ${kpi("Years w/ data", (s.years_with_data || 0) + " / " + (s.total_years || 0))}
+    </div>
+    <div class="small-note">Status: ${statusPill(d.status)}</div>
+  </div>`;
+
+  // Cropland Extent — LINE chart
+  html += `<div class="agri-section">
+    <h3>Cropland Extent ${statusPill(_bestStatus(d.cropland_extent, "status"))}</h3>
+    <div class="agri-desc">Total cropland area within AOI per year</div>
+    <div class="agri-source">Source: Dynamic World — GOOGLE/DYNAMICWORLD/V1</div>
+    ${_badges(d.cropland_extent)}
+    <div class="agri-chart-wrap"><canvas id="agriExtentChart"></canvas></div>
+    <div class="small-note">Missing years are gaps, not zeros. Crop probability threshold: 0.4.</div>
+  </div>`;
+
+  // Cropland Conversion — GROUPED BAR chart
+  html += `<div class="agri-section">
+    <h3>Cropland Conversion ${statusPill(_bestStatus(d.cropland_conversion, "status"))}</h3>
+    <div class="agri-desc">Year-over-year gain (new cropland) and loss (cropland removed)</div>
+    <div class="agri-source">Source: Dynamic World majority-class transition</div>
+    <div class="agri-chart-wrap"><canvas id="agriConversionChart"></canvas></div>
+    <div class="small-note">Green = gain (non-crop→crop), Red = loss (crop→non-crop).</div>
+  </div>`;
+
+  // Phenology — MONTHLY SEASONAL LINE
+  html += `<div class="agri-section">
+    <h3>Crop Phenology ${statusPill(_bestStatus(d.phenology, "status"))}</h3>
+    <div class="agri-desc">Cloud-masked Sentinel-2 monthly NDVI/EVI composites</div>
+    <div class="agri-source">Source: COPERNICUS/S2_SR_HARMONIZED</div>
+    <div class="agri-chart-wrap"><canvas id="agriPhenologyChart"></canvas></div>
+    <div class="small-note">Null months are gaps, not zeros. Only cloud-masked composites plotted.</div>
+  </div>`;
+
+  // Food Security — CATEGORICAL BLOCKS
+  html += `<div class="agri-section">
+    <h3>Food Security Classification ${statusPill(_bestStatus(d.food_security, "status"))}</h3>
+    <div class="agri-desc">FEWS NET IPC-phase classification (centroid-based approximation)</div>
+    <div class="agri-source">Source: FEWS NET — not full AOI-level analysis</div>
+    <div class="ipc-timeline" id="agriIpcTimeline"></div>
+    <div class="small-note">IPC: 1 Minimal, 2 Stressed, 3 Crisis, 4 Emergency, 5 Famine. Gray = unavailable.</div>
+  </div>`;
+
+  agriculturePanelEl.innerHTML = html;
+
+  // Render charts
+  _renderExtentChart(d.cropland_extent || []);
+  _renderConversionChart(d.cropland_conversion || []);
+  _renderPhenologyChart(d.phenology || []);
+  _renderIpcTimeline(d.food_security || []);
+}
+
+function _bestStatus(records, key) {
+  if (!records || !records.length) return "unavailable";
+  if (records.some(r => r[key] === "ok")) return "ok";
+  if (records.some(r => r[key] === "partial")) return "partial";
+  if (records.some(r => r[key] === "insufficient_data")) return "insufficient_data";
+  return "unavailable";
+}
+
+function _badges(records) {
+  if (!records || !records.length) return "";
+  const ok = records.filter(r => r.status === "ok" || r.status === "partial");
+  if (!ok.length) return "";
+  const avgConf = ok.reduce((s, r) => s + (r.confidence || 0), 0) / ok.length;
+  const avgCov = ok.reduce((s, r) => s + (r.coverage || 0), 0) / ok.length;
+  return `<div class="agri-badges">
+    <span class="confidence-badge">Confidence: ${Math.round(avgConf * 100)}%</span>
+    <span class="coverage-badge">Coverage: ${Math.round(avgCov * 100)}%</span>
+  </div>`;
+}
+
+function _renderExtentChart(records) {
+  const canvas = document.getElementById("agriExtentChart");
+  if (!canvas) return;
+  const ok = records.filter(r => (r.status === "ok" || r.status === "partial") && r.value != null);
+  if (!ok.length) { canvas.parentElement.innerHTML = `<div class="agri-unavailable">Cropland extent data unavailable for this AOI.</div>`; return; }
+
+  const labels = records.map(r => r.year);
+  const data = records.map(r => (r.status === "ok" || r.status === "partial") && r.value != null ? r.value : null);
+
+  agriCharts.push(new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{ label: "Cropland (km²)", data, borderColor: "#67e8a6", backgroundColor: "rgba(103,232,166,0.15)", tension: 0.3, spanGaps: false, pointRadius: 4, pointBackgroundColor: "#67e8a6", fill: true }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: { ticks: { color: "#aeb8b2" } }, y: { beginAtZero: true, ticks: { color: "#aeb8b2" }, title: { display: true, text: "km²", color: "#aeb8b2" } } },
+      plugins: { legend: { labels: { color: "#dbe8ff" } } },
+    },
+  }));
+}
+
+function _renderConversionChart(records) {
+  const canvas = document.getElementById("agriConversionChart");
+  if (!canvas) return;
+  const ok = records.filter(r => r.status !== "unavailable");
+  if (!ok.length) { canvas.parentElement.innerHTML = `<div class="agri-unavailable">Cropland conversion data unavailable.</div>`; return; }
+
+  const labels = records.map(r => `${r.previous_year}→${r.year}`);
+  const gains = records.map(r => r.gain_km2 != null ? r.gain_km2 : null);
+  const losses = records.map(r => r.loss_km2 != null ? -r.loss_km2 : null);
+
+  agriCharts.push(new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "Gain (km²)", data: gains, backgroundColor: "rgba(103,232,166,0.7)", borderColor: "#67e8a6", borderWidth: 1 },
+        { label: "Loss (km²)", data: losses, backgroundColor: "rgba(255,107,107,0.7)", borderColor: "#ff6b6b", borderWidth: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: { ticks: { color: "#aeb8b2" } }, y: { ticks: { color: "#aeb8b2" }, title: { display: true, text: "km²", color: "#aeb8b2" } } },
+      plugins: { legend: { labels: { color: "#dbe8ff" } } },
+    },
+  }));
+}
+
+function _renderPhenologyChart(records) {
+  const canvas = document.getElementById("agriPhenologyChart");
+  if (!canvas) return;
+  // Use most recent year with ok/partial data
+  const valid = records.filter(r => r.status === "ok" || r.status === "partial");
+  if (!valid.length) { canvas.parentElement.innerHTML = `<div class="agri-unavailable">Phenology data unavailable for this AOI.</div>`; return; }
+
+  const latest = valid[valid.length - 1];
+  const ndvi = latest.monthly_ndvi || [];
+  const evi = latest.monthly_evi || [];
+
+  agriCharts.push(new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: MONTH_LABELS,
+      datasets: [
+        { label: `NDVI ${latest.year}`, data: ndvi.map(v => v != null ? v : null), borderColor: "#67e8a6", backgroundColor: "rgba(103,232,166,0.1)", tension: 0.35, spanGaps: false, pointRadius: 3 },
+        { label: `EVI ${latest.year}`, data: evi.map(v => v != null ? v : null), borderColor: "#5fb3ff", backgroundColor: "rgba(95,179,255,0.1)", tension: 0.35, spanGaps: false, pointRadius: 3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: { ticks: { color: "#aeb8b2" } }, y: { min: 0, max: 1, ticks: { color: "#aeb8b2" }, title: { display: true, text: "Index", color: "#aeb8b2" } } },
+      plugins: { legend: { labels: { color: "#dbe8ff" } } },
+    },
+  }));
+}
+
+function _renderIpcTimeline(records) {
+  const container = document.getElementById("agriIpcTimeline");
+  if (!container) return;
+  if (!records.length) { container.innerHTML = `<div class="agri-unavailable">Food security data unavailable.</div>`; return; }
+
+  container.innerHTML = records.map(r => {
+    if (r.status !== "ok" || r.phase == null) {
+      return `<div class="ipc-block ipc-na"><span class="ipc-year">${r.year}</span>N/A</div>`;
+    }
+    const bg = IPC_COLORS[r.phase] || "#666";
+    const fg = IPC_TEXT[r.phase] || "#fff";
+    return `<div class="ipc-block" style="background:${bg};color:${fg}"><span class="ipc-year">${r.year}</span>${r.phase_label || "P" + r.phase}</div>`;
+  }).join("");
+}

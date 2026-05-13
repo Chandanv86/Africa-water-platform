@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.agriculture import router as agriculture_router
 from app.api.aoi import router as aoi_router
 from app.api.health import router as health_router
 from app.api.metadata import router as metadata_router
@@ -56,6 +57,7 @@ app.include_router(health_router, prefix="/health", tags=["health"])
 app.include_router(metadata_router, prefix="/metadata", tags=["metadata"])
 app.include_router(water_router, prefix="/water", tags=["water"])
 app.include_router(aoi_router, prefix="/aoi", tags=["aoi"])
+app.include_router(agriculture_router, prefix="/aoi/agriculture", tags=["agriculture"])
 app.include_router(tif_router, prefix="/tif", tags=["tif"])
 
 # Backward-compatible API prefix used by earlier frontend builds
@@ -64,6 +66,7 @@ api_v1.include_router(health_router, prefix="/health", tags=["health-v1"])
 api_v1.include_router(metadata_router, prefix="/metadata", tags=["metadata-v1"])
 api_v1.include_router(water_router, prefix="/water", tags=["water-v1"])
 api_v1.include_router(aoi_router, prefix="/aoi", tags=["aoi-v1"])
+api_v1.include_router(agriculture_router, prefix="/aoi/agriculture", tags=["agriculture-v1"])
 api_v1.include_router(tif_router, prefix="/tif", tags=["tif-v1"])
 app.include_router(api_v1)
 

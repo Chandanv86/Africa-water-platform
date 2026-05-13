@@ -14,6 +14,7 @@ from app.services.ee_geometry import ee_area_m2, ee_buffer_bounds
 from app.services.sensor_bands import (
     CHIRPS,
     SENTINEL1_GRD,
+    SENTINEL2_SR,
     SENTINEL3_OLCI,
     TERRACLIMATE,
     JRC_GSW,
@@ -431,16 +432,7 @@ def timeline_context_aoi(geom, yearly: Optional[List[Dict[str, Any]]] = None, mo
     s2_scale = max(20, trend_scale)
     s3_scale = max(300, trend_scale)
     climate_scale = max(5000, trend_scale)
-    area_m2 = safe_area_m2(geom, None, label="timeline_aoi_area")
-
-    flood_yearly_trends: List[Dict[str, Any]] = []
-    turbidity_yearly_trends: List[Dict[str, Any]] = []
-    chlorophyll_yearly_trends: List[Dict[str, Any]] = []
-    soil_moisture_yearly_trends: List[Dict[str, Any]] = []
-    drought_yearly_trends: List[Dict[str, Any]] = []
-    glacier_yearly_trends: List[Dict[str, Any]] = []
-    water_quality_yearly_trends: List[Dict[str, Any]] = []
-    anomaly_yearly_trends: List[Dict[str, Any]] = []
+    area_m2 = safe_area_m2(geom, None, label="timeline_aoi_area") or 0.0
 
     def _row_value(row: Dict[str, Any], *keys: str) -> Optional[float]:
         for key in keys:
@@ -455,153 +447,269 @@ def timeline_context_aoi(geom, yearly: Optional[List[Dict[str, Any]]] = None, mo
     def _round(value: Optional[float], digits: int = 3) -> Optional[float]:
         return None if value is None else round(float(value), digits)
 
-    for year in years:
+    def _ee_clamp(value):
+        return ee.Number(value).max(0).min(1)
+
+    def _null_or_clamped(value):
+        return ee.Algorithms.If(
+            ee.Algorithms.IsEqual(value, None),
+            None,
+            _ee_clamp(value),
+        )
+
+    def _null_or_number(value):
+        return ee.Algorithms.If(ee.Algorithms.IsEqual(value, None), None, ee.Number(value))
+
+    def _year_feature(year_value):
+        year = ee.Number(year_value).toInt()
         start = ee.Date.fromYMD(year, 1, 1)
         end = start.advance(1, "year")
+        area = ee.Number(max(float(area_m2 or 0.0), 1.0))
+
+        s1 = (
+            ee.ImageCollection("COPERNICUS/S1_GRD")
+            .filterBounds(geom)
+            .filterDate(start, end)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", SENTINEL1_GRD["vv"]))
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", SENTINEL1_GRD["vh"]))
+        )
+        s1_count = s1.size()
+        empty_s1 = ee.Image.constant([0, 0]).rename([SENTINEL1_GRD["vv"], SENTINEL1_GRD["vh"]]).updateMask(ee.Image.constant(0))
+        sar = ee.Image(ee.Algorithms.If(s1_count.gt(0), s1.median(), empty_s1)).clip(geom)
+        vv_img = sar.select(SENTINEL1_GRD["vv"])
+        vh_img = sar.select(SENTINEL1_GRD["vh"])
+        vv_raw = vv_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=s1_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get(SENTINEL1_GRD["vv"])
+        wet_area_raw = vv_img.lt(-17).And(vh_img.lt(-22)).multiply(ee.Image.pixelArea()).rename("wet").reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=geom,
+            scale=s1_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get("wet")
+        wet_area = ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(wet_area_raw, None), 0, wet_area_raw))
+        wet_fraction = wet_area.divide(area)
+        flood_signal = ee.Algorithms.If(s1_count.gt(0), _ee_clamp(wet_fraction.multiply(4.0)), None)
+        moisture_proxy = ee.Algorithms.If(
+            ee.Algorithms.IsEqual(vv_raw, None),
+            None,
+            _ee_clamp(ee.Number(vv_raw).add(22.0).divide(12.0)),
+        )
+        soil_stress = ee.Algorithms.If(
+            ee.Algorithms.IsEqual(moisture_proxy, None),
+            None,
+            _ee_clamp(ee.Number(1).subtract(ee.Number(moisture_proxy))),
+        )
+
+        s2 = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(geom)
+            .filterDate(start, end)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 70))
+            .map(_mask_s2_sr)
+        )
+        s2_count = s2.size()
+        empty_s2 = ee.Image.constant([0, 0, 0, 0]).rename([
+            SENTINEL2_SR["green"],
+            SENTINEL2_SR["red"],
+            SENTINEL2_SR["nir"],
+            SENTINEL2_SR["swir1"],
+        ]).updateMask(ee.Image.constant(0))
+        s2_img = ee.Image(ee.Algorithms.If(s2_count.gt(0), s2.median(), empty_s2)).clip(geom)
+        water = s2_mndwi(s2_img).gt(0.0).Or(s2_ndwi(s2_img).gt(0.0))
+        ndti = s2_ndti(s2_img)
+        ndti_raw = ndti.updateMask(water).reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=s2_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get("NDTI")
+        turbidity_proxy = ee.Algorithms.If(
+            ee.Algorithms.IsEqual(ndti_raw, None),
+            None,
+            _ee_clamp(ee.Number(ndti_raw).add(0.2).divide(0.6)),
+        )
+        snow_area_raw = s2_ndsi(s2_img).gt(0.4).multiply(ee.Image.pixelArea()).rename("snow").reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=geom,
+            scale=s2_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get("snow")
+        snow_area = ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(snow_area_raw, None), 0, snow_area_raw))
+        snow_fraction = ee.Algorithms.If(s2_count.gt(0), _ee_clamp(snow_area.divide(area)), None)
+
+        s3 = ee.ImageCollection("COPERNICUS/S3/OLCI").filterBounds(geom).filterDate(start, end)
+        s3_count = s3.size()
+        empty_s3 = ee.Image.constant([0, 0]).rename([SENTINEL3_OLCI["red_edge"], SENTINEL3_OLCI["red"]]).updateMask(ee.Image.constant(0))
+        s3_img = ee.Image(ee.Algorithms.If(s3_count.gt(0), s3.median(), empty_s3)).clip(geom)
+        ndci_raw = _olci_ndci(s3_img).reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=s3_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get("NDCI")
+        chlorophyll_proxy = ee.Algorithms.If(
+            ee.Algorithms.IsEqual(ndci_raw, None),
+            None,
+            _ee_clamp(ee.Number(ndci_raw).add(0.15).divide(0.5)),
+        )
+
+        chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom).filterDate(start, end)
+        precip_raw = chirps.select(CHIRPS["precipitation"]).sum().reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=climate_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get(CHIRPS["precipitation"])
+        tc = ee.ImageCollection("IDAHO_EPSCOR/TERRACLIMATE").filterBounds(geom).filterDate(start, end)
+        tc_count = tc.size()
+        empty_pdsi = ee.Image.constant(0).rename(TERRACLIMATE["pdsi"]).updateMask(ee.Image.constant(0))
+        pdsi_img = ee.Image(ee.Algorithms.If(tc_count.gt(0), _terraclimate_pdsi(tc.mean()), empty_pdsi))
+        pdsi_raw = pdsi_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=climate_scale,
+            bestEffort=True,
+            maxPixels=1e8,
+        ).get(TERRACLIMATE["pdsi"])
+        drought_stress = ee.Algorithms.If(
+            ee.Algorithms.IsEqual(pdsi_raw, None),
+            None,
+            _ee_clamp(ee.Number(0.5).subtract(ee.Number(pdsi_raw).divide(10.0))),
+        )
+
+        return ee.Feature(None, {
+            "year": year,
+            "flood_signal": flood_signal,
+            "flood_extent_fraction": ee.Algorithms.If(s1_count.gt(0), wet_fraction, None),
+            "s1_scene_count": s1_count,
+            "moisture_proxy": moisture_proxy,
+            "soil_moisture_proxy": moisture_proxy,
+            "soil_stress": soil_stress,
+            "turbidity_proxy": turbidity_proxy,
+            "ndti": _null_or_number(ndti_raw),
+            "s2_scene_count": s2_count,
+            "snow_ice_fraction": snow_fraction,
+            "chlorophyll_proxy": chlorophyll_proxy,
+            "ndci": _null_or_number(ndci_raw),
+            "s3_scene_count": s3_count,
+            "drought_stress": drought_stress,
+            "pdsi": _null_or_number(pdsi_raw),
+            "precip_mm": _null_or_number(precip_raw),
+            "terraclimate_count": tc_count,
+        })
+
+    rows = safe_feature_rows(
+        ee.FeatureCollection(ee.List(years).map(_year_feature)),
+        [],
+        label="timeline_yearly_batched",
+    )
+
+    flood_yearly_trends: List[Dict[str, Any]] = []
+    turbidity_yearly_trends: List[Dict[str, Any]] = []
+    chlorophyll_yearly_trends: List[Dict[str, Any]] = []
+    soil_moisture_yearly_trends: List[Dict[str, Any]] = []
+    drought_yearly_trends: List[Dict[str, Any]] = []
+    glacier_yearly_trends: List[Dict[str, Any]] = []
+    water_quality_yearly_trends: List[Dict[str, Any]] = []
+    anomaly_yearly_trends: List[Dict[str, Any]] = []
+    failure_notes: List[str] = []
+
+    if not rows:
+        failure_notes.append("Batched yearly EO trend reducer returned no rows.")
+
+    for row in sorted(rows, key=lambda item: item.get("year") or 0):
+        year = int(row.get("year"))
         anomaly_inputs: List[float] = []
 
-        try:
-            s1 = (
-                ee.ImageCollection("COPERNICUS/S1_GRD")
-                .filterBounds(geom)
-                .filterDate(start, end)
-                .filter(ee.Filter.eq("instrumentMode", "IW"))
-                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", SENTINEL1_GRD["vv"]))
-                .filter(ee.Filter.listContains("transmitterReceiverPolarisation", SENTINEL1_GRD["vh"]))
-            )
-            s1_count = int(safe_getinfo(s1.size(), 0, label=f"timeline_s1_count_{year}") or 0)
-            if s1_count:
-                sar = s1.median().clip(geom)
-                vv_img = sar.select(SENTINEL1_GRD["vv"])
-                vh_img = sar.select(SENTINEL1_GRD["vh"])
-                vv = safe_reduce_mean(vv_img, geom, scale=s1_scale, label=f"timeline_s1_vv_{year}").get(SENTINEL1_GRD["vv"])
-                vh = safe_reduce_mean(vh_img, geom, scale=s1_scale, label=f"timeline_s1_vh_{year}").get(SENTINEL1_GRD["vh"])
-                wet_mask = vv_img.lt(-17).And(vh_img.lt(-22))
-                wet_area = next(iter(safe_reduce_sum(wet_mask.multiply(ee.Image.pixelArea()), geom, scale=s1_scale, label=f"timeline_flood_area_{year}").values()), None)
-                wet_fraction = float(wet_area) / float(area_m2) if wet_area is not None and area_m2 else None
-                flood_signal = clamp((wet_fraction or 0.0) * 4.0) if wet_fraction is not None else None
-                if flood_signal is not None:
-                    flood_yearly_trends.append({
-                        "year": year,
-                        "flood_signal": _round(flood_signal),
-                        "value": _round(flood_signal),
-                        "extent_fraction": _round(wet_fraction, 5),
-                        "scene_count": s1_count,
-                        "dataset": "Sentinel-1 GRD",
-                    })
-                    anomaly_inputs.append(float(flood_signal))
-                if vv is not None:
-                    moisture_proxy = clamp((float(vv) + 22.0) / 12.0)
-                    stress = clamp(1.0 - moisture_proxy)
-                    soil_moisture_yearly_trends.append({
-                        "year": year,
-                        "moisture_proxy": _round(moisture_proxy),
-                        "soil_moisture_proxy": _round(moisture_proxy),
-                        "stress": _round(stress),
-                        "value": _round(moisture_proxy),
-                        "scene_count": s1_count,
-                        "dataset": "Sentinel-1 SAR proxy",
-                    })
-                    anomaly_inputs.append(float(stress))
-        except Exception as exc:
-            logger.warning("Timeline Sentinel-1 trend failed for %s: %s", year, exc)
+        flood_signal = _row_value(row, "flood_signal")
+        if flood_signal is not None:
+            flood_yearly_trends.append({
+                "year": year,
+                "flood_signal": _round(flood_signal),
+                "value": _round(flood_signal),
+                "extent_fraction": _round(_row_value(row, "flood_extent_fraction"), 5),
+                "scene_count": int(row.get("s1_scene_count") or 0),
+                "dataset": "Sentinel-1 GRD",
+            })
+            anomaly_inputs.append(flood_signal)
 
-        try:
-            s2 = (
-                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                .filterBounds(geom)
-                .filterDate(start, end)
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 70))
-                .map(_mask_s2_sr)
-            )
-            s2_count = int(safe_getinfo(s2.size(), 0, label=f"timeline_s2_count_{year}") or 0)
-            if s2_count:
-                s2_img = s2.median().clip(geom)
-                water = s2_mndwi(s2_img).gt(0.0).Or(s2_ndwi(s2_img).gt(0.0))
-                ndti = s2_ndti(s2_img)
-                turbidity = safe_reduce_mean(ndti.updateMask(water), geom, scale=s2_scale, label=f"timeline_turbidity_{year}").get("NDTI")
-                if turbidity is not None:
-                    turbidity_proxy = clamp((float(turbidity) + 0.2) / 0.6)
-                    turbidity_yearly_trends.append({
-                        "year": year,
-                        "turbidity_proxy": _round(turbidity_proxy),
-                        "ndti": _round(float(turbidity), 4),
-                        "value": _round(turbidity_proxy),
-                        "scene_count": s2_count,
-                        "dataset": "Sentinel-2 SR Harmonized",
-                    })
-                    anomaly_inputs.append(float(turbidity_proxy))
-                ndsi = s2_ndsi(s2_img)
-                snow_mask = ndsi.gt(0.4)
-                snow_area = next(iter(safe_reduce_sum(snow_mask.multiply(ee.Image.pixelArea()), geom, scale=s2_scale, label=f"timeline_snow_area_{year}").values()), None)
-                snow_fraction = float(snow_area) / float(area_m2) if snow_area is not None and area_m2 else None
-                if snow_fraction is not None:
-                    glacier_yearly_trends.append({
-                        "year": year,
-                        "snow_ice_fraction": _round(clamp(snow_fraction), 5),
-                        "value": _round(clamp(snow_fraction), 5),
-                        "scene_count": s2_count,
-                        "dataset": "Sentinel-2 NDSI",
-                    })
-        except Exception as exc:
-            logger.warning("Timeline Sentinel-2 trend failed for %s: %s", year, exc)
+        moisture_proxy = _row_value(row, "moisture_proxy", "soil_moisture_proxy")
+        if moisture_proxy is not None:
+            stress = _row_value(row, "soil_stress")
+            soil_moisture_yearly_trends.append({
+                "year": year,
+                "moisture_proxy": _round(moisture_proxy),
+                "soil_moisture_proxy": _round(moisture_proxy),
+                "stress": _round(stress),
+                "value": _round(moisture_proxy),
+                "scene_count": int(row.get("s1_scene_count") or 0),
+                "dataset": "Sentinel-1 SAR proxy",
+            })
+            if stress is not None:
+                anomaly_inputs.append(stress)
 
-        try:
-            s3 = (
-                ee.ImageCollection("COPERNICUS/S3/OLCI")
-                .filterBounds(geom)
-                .filterDate(start, end)
-            )
-            s3_count = int(safe_getinfo(s3.size(), 0, label=f"timeline_s3_count_{year}") or 0)
-            if s3_count:
-                s3_img = s3.median().clip(geom)
-                ndci = _olci_ndci(s3_img)
-                ndci_value = safe_reduce_mean(ndci, geom, scale=s3_scale, label=f"timeline_chlorophyll_{year}").get("NDCI")
-                if ndci_value is not None:
-                    chl_proxy = clamp((float(ndci_value) + 0.15) / 0.5)
-                    chlorophyll_yearly_trends.append({
-                        "year": year,
-                        "chlorophyll_proxy": _round(chl_proxy),
-                        "ndci": _round(float(ndci_value), 4),
-                        "value": _round(chl_proxy),
-                        "scene_count": s3_count,
-                        "dataset": "Sentinel-3 OLCI",
-                    })
-                    anomaly_inputs.append(float(chl_proxy))
-        except Exception as exc:
-            logger.warning("Timeline Sentinel-3 OLCI trend failed for %s: %s", year, exc)
+        turbidity_proxy = _row_value(row, "turbidity_proxy")
+        if turbidity_proxy is not None:
+            turbidity_yearly_trends.append({
+                "year": year,
+                "turbidity_proxy": _round(turbidity_proxy),
+                "ndti": _round(_row_value(row, "ndti"), 4),
+                "value": _round(turbidity_proxy),
+                "scene_count": int(row.get("s2_scene_count") or 0),
+                "dataset": "Sentinel-2 SR Harmonized",
+            })
+            anomaly_inputs.append(turbidity_proxy)
 
-        try:
-            chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(geom).filterDate(start, end)
-            precip_img = chirps.select(CHIRPS["precipitation"]).sum()
-            precip = safe_reduce_mean(precip_img, geom, scale=climate_scale, label=f"timeline_chirps_{year}").get(CHIRPS["precipitation"])
-            tc = ee.ImageCollection("IDAHO_EPSCOR/TERRACLIMATE").filterBounds(geom).filterDate(start, end)
-            tc_count = int(safe_getinfo(tc.size(), 0, label=f"timeline_tc_count_{year}") or 0)
-            pdsi = None
-            if tc_count:
-                pdsi = safe_reduce_mean(
-                    _terraclimate_pdsi(tc.mean()),
-                    geom,
-                    scale=climate_scale,
-                    label=f"timeline_pdsi_{year}",
-                ).get(TERRACLIMATE["pdsi"])
-            drought_stress = clamp(0.5 - float(pdsi) / 10.0) if pdsi is not None else None
-            if drought_stress is not None or precip is not None:
-                drought_yearly_trends.append({
-                    "year": year,
-                    "drought_stress": _round(drought_stress),
-                    "pdsi": _round(float(pdsi), 3) if pdsi is not None else None,
-                    "precip_mm": _round(float(precip), 2) if precip is not None else None,
-                    "value": _round(drought_stress),
-                    "dataset": "CHIRPS + TerraClimate",
-                })
-                if drought_stress is not None:
-                    anomaly_inputs.append(float(drought_stress))
-        except Exception as exc:
-            logger.warning("Timeline drought trend failed for %s: %s", year, exc)
+        snow_fraction = _row_value(row, "snow_ice_fraction")
+        if snow_fraction is not None:
+            glacier_yearly_trends.append({
+                "year": year,
+                "snow_ice_fraction": _round(snow_fraction, 5),
+                "value": _round(snow_fraction, 5),
+                "scene_count": int(row.get("s2_scene_count") or 0),
+                "dataset": "Sentinel-2 NDSI",
+            })
 
-        turbidity_row = next((row for row in turbidity_yearly_trends if row["year"] == year), None)
-        chlorophyll_row = next((row for row in chlorophyll_yearly_trends if row["year"] == year), None)
+        chlorophyll_proxy = _row_value(row, "chlorophyll_proxy")
+        if chlorophyll_proxy is not None:
+            chlorophyll_yearly_trends.append({
+                "year": year,
+                "chlorophyll_proxy": _round(chlorophyll_proxy),
+                "ndci": _round(_row_value(row, "ndci"), 4),
+                "value": _round(chlorophyll_proxy),
+                "scene_count": int(row.get("s3_scene_count") or 0),
+                "dataset": "Sentinel-3 OLCI",
+            })
+            anomaly_inputs.append(chlorophyll_proxy)
+
+        drought_stress = _row_value(row, "drought_stress")
+        precip = _row_value(row, "precip_mm")
+        pdsi = _row_value(row, "pdsi")
+        if drought_stress is not None or precip is not None:
+            drought_yearly_trends.append({
+                "year": year,
+                "drought_stress": _round(drought_stress),
+                "pdsi": _round(pdsi, 3),
+                "precip_mm": _round(precip, 2),
+                "value": _round(drought_stress),
+                "dataset": "CHIRPS + TerraClimate",
+            })
+            if drought_stress is not None:
+                anomaly_inputs.append(drought_stress)
+
+        turbidity_row = next((item for item in turbidity_yearly_trends if item["year"] == year), None)
+        chlorophyll_row = next((item for item in chlorophyll_yearly_trends if item["year"] == year), None)
         turbidity_value = _row_value(turbidity_row or {}, "turbidity_proxy")
         chlorophyll_value = _row_value(chlorophyll_row or {}, "chlorophyll_proxy")
         if turbidity_value is not None or chlorophyll_value is not None:
@@ -624,6 +732,8 @@ def timeline_context_aoi(geom, yearly: Optional[List[Dict[str, Any]]] = None, mo
                 "anomaly": _round(anomaly),
             })
 
+    status = "ok" if anomaly_yearly_trends else ("partial" if rows else "insufficient_data")
+
     return {
         "yearly": yearly,
         "monthly": [],
@@ -644,7 +754,8 @@ def timeline_context_aoi(geom, yearly: Optional[List[Dict[str, Any]]] = None, mo
         "anomaly_trends": anomaly_yearly_trends,
         "anomaly_yearly_trends": anomaly_yearly_trends,
         "scale_note": f"Yearly EO trends use scale {trend_scale} m for AOI stability; missing years indicate unavailable observations, not zero.",
-        "status": "ok" if yearly or anomaly_yearly_trends else "insufficient_data",
+        "status": status,
+        "reason": "; ".join(failure_notes) if failure_notes else None,
     }
 
 
