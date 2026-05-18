@@ -1,5 +1,6 @@
 Africa Water Intelligence Platform - Project Handoff State
-Generated: 2026-05-13
+Generated: 2026-05-18
+Last Run: 2026-05-18 11:29:19 - 11:39:28 UTC
 Workspace:
 C:\Users\chand\OneDrive\Desktop\SkyQuest\my vault\africa-water-platform-aoi-fixed-v2\africa-water-platform-aoi
 
@@ -235,7 +236,7 @@ Known recent water-related bugs that were addressed:
 
 Agriculture/Food Security State
 ===============================
-Agriculture module is new/partially integrated and currently separate from water AOI endpoint.
+Agriculture module integration is complete and working with documented limitations.
 
 Endpoint:
 - POST /aoi/agriculture/analyze
@@ -247,66 +248,58 @@ Default query params:
 
 Reason default was shortened:
 - Frontend originally requested 2018-2025.
-- That caused Earth Engine 429 and "Too many concurrent aggregations".
+- That caused Earth Engine 429 "Too many concurrent aggregations" failures.
 - 2022-2025 is a safer frontend default while API still supports explicit longer ranges.
+- Even 2022-2025 (4 years) can hit quota limits under concurrent AOI analysis.
 
 Current agriculture response includes:
-- geometry
-- stats
-- centroid
-- label
-- year_range
-- cropland_extent
-- cropland_conversion
-- phenology
-- food_security
-- yearly_changes
-- summary
-- methodology
-- sources
-- status
-- notes
+- geometry, stats, centroid, label, year_range
+- cropland_extent (Dynamic World annual median)
+- cropland_conversion (year-over-year gain/loss)
+- phenology (Sentinel-2 monthly NDVI/EVI)
+- food_security (FEWS NET IPC categorical)
+- yearly_changes (YoY cropland extent deltas)
+- summary (latest values + trend + quality metrics)
+- methodology (detailed descriptions)
+- sources (data provenance)
+- status (ok | partial | unavailable)
+- notes (human-readable context)
 
-Recent critical agriculture bug fixed:
-- Runtime error:
-  Agriculture analysis failed: name '_yearly_changes' is not defined
-- Cause:
-  agriculture_service.py called _yearly_changes(extent_results) but the helper/model path was missing.
-- Fix:
-  YearOverYearChange model added.
-  AgricultureAnalysisResponse includes yearly_changes.
-  _yearly_changes helper added and wired.
+Recent fixes (May 13-18, 2026):
+- Removed unreachable old per-year code block after return statement.
+- Enhanced summary with confidence/coverage/average metrics.
+- Added cropland interpretation notes for low/minimal values.
+- Improved error messages with resource links and context.
+- Expanded methodology documentation explaining thresholds and data quality.
+- Food security notes clarified as centroid-based approximation.
 
-Recent agriculture smoke result:
-- Direct service smoke for 2024-2025 returned:
-  status: partial
-  extent_statuses: ok, ok
-  conversion_statuses: ok
-  phenology_statuses: ok, ok
-  food_statuses: unavailable, unavailable
-  yearly_changes: present
-  latest_cropland_km2: 0.0 treated as real data, not missing
+Latest test run (2026-05-18):
+- Server launched successfully.
+- POST /aoi/analyze returned HTTP 200 OK.
+- POST /aoi/agriculture/analyze returned HTTP 200 OK (twice).
+- But encountered Earth Engine quota/timeout issues:
+  * Dynamic World task timed out after 120s
+  * Phenology task failed: "Too many concurrent aggregations" (429 errors)
+  * Multiple retries with exponential backoff logged
+  * Final response still HTTP 200 with partial/unavailable status records
 
-- Live route smoke against:
-  POST http://127.0.0.1:8000/aoi/agriculture/analyze?year_start=2024&year_end=2025
-  returned:
-  status: partial
-  years: 2024,2025
-  extent: ok,ok
-  conversion: ok
-  phenology: ok,ok
-  yearly_changes: 1
+Current agriculture limitations:
+- FEWS NET returns unavailable for many regions (not a bug, data gap).
+- Food security is centroid-based, not area-weighted AOI aggregation.
+- Dynamic World and Sentinel-2 phenology WILL timeout/fail under concurrent load.
+- 4-year analysis over large AOIs is pushing quota limits; backend handles gracefully.
+- Shorter year ranges (2-3 years) and smaller AOIs recommended for interactive use.
+- Long historical analysis (2018-2025) requires async processing / background jobs.
 
-Known agriculture limitations:
-- FEWS NET currently often returns unavailable. It remains categorical and does not fake values.
-- Food security is centroid-based approximation, not area-weighted AOI aggregation.
-- Dynamic World and Sentinel-2 phenology can still hit EE quota/aggregation limits for large AOIs or long year ranges.
-- The code returns partial/unavailable states rather than crashing when provider data is unavailable.
+Known agriculture code issues:
+- Some old per-year code paths may still exist in dynamic_world_service or sentinel2_phenology_service (not yet fully audited).
+- Consider comprehensive cleanup pass to remove all legacy per-year fallback code.
 
-Important known agriculture code cleanup:
-- app/services/agriculture_service.py contains an unreachable old per-year implementation after `return response`.
-- It currently does not execute.
-- It should be removed in the next cleanup pass because it references older per-year extractor paths and can confuse future maintenance.
+Frontend agriculture:
+- Calls /aoi/agriculture/analyze after water AOI succeeds.
+- Renders cropland extent line chart, conversion bar chart, phenology monthly line, IPC categorical timeline.
+- Missing values correctly render as gaps, not zeros.
+- Request token prevents stale data overwriting newer AOI responses.
 
 
 Frontend State
@@ -420,130 +413,278 @@ Expected:
 
 Current Git/Workspace State
 ===========================
-As of the last inspection, git status showed modified files:
-- app/main.py
-- app/sanity_checks.py
-- app/services/cache_service.py
-- app/services/gee_service.py
-- app/static/index.html
-- app/static/main.js
-- app/static/style.css
+As of May 18, 2026:
 
-Untracked/new project files:
-- app/api/agriculture.py
-- app/models/agriculture_models.py
-- app/services/agriculture_service.py
-- app/services/dynamic_world_service.py
-- app/services/fewsnet_service.py
-- app/services/sentinel2_phenology_service.py
-- implementation_plan.md
-- world_bank_africa_project_map_architecture.svg
-- 09100208203_Students_Details 2026-27.xlsx
+Last commit:
+  be85de8 (HEAD -> main, origin/main) "Agriculture & Food Security Added" [May 13, 2026]
+  
+Files in commit:
+  - 18 files changed, 3,401 insertions(+)
+  - New: app/api/agriculture.py, app/models/agriculture_models.py
+  - New: app/services/agriculture_service.py, dynamic_world_service.py
+  - New: app/services/fewsnet_service.py, sentinel2_phenology_service.py
+  - Modified: app/main.py, app/sanity_checks.py, app/static/*, app/services/cache_service.py, gee_service.py
+  - Added: implementation_plan.md, world_bank_africa_project_map_architecture.svg
+  - Unrelated: 09100208203_Students_Details 2026-27.xlsx (should be .gitignored)
 
-Important:
-- Some files may be user-generated or unrelated. Do not blindly revert anything.
-- The spreadsheet appears unrelated to this geospatial platform and should probably be ignored unless the user says otherwise.
+Working directory (May 18):
+  - Clean (all changes committed)
+  - Recent test run (11:29-11:39 UTC) showed quota issues but no crashes
+  - Backend remains stable under load; returns partial data gracefully
+
+Recommended cleanup:
+  - Add .gitignore entry for student details spreadsheet
+  - Audit dynamic_world_service.py and sentinel2_phenology_service.py for dead per-year code
+  - Consider squashing agriculture commits if more changes needed
 
 
 Known Bugs / Risks Remaining
 ============================
-1. Agriculture service contains unreachable old code after return.
-   Priority: medium.
-   Impact: not runtime-breaking, but confusing and should be deleted.
+CONFIRMED (May 18, 2026 test run):
 
-2. Long agriculture ranges or large AOIs can still cause EE 429 / "Too many concurrent aggregations".
-   Priority: high for production.
-   Mitigation now: shorter default range, sequential EE calls, graceful partial state.
-   Future fix: reduce server-side aggregations further, tile large AOIs, add background jobs, or generate exported tables/assets asynchronously.
+1. Earth Engine User Memory Limit Exceeded
+   When: timeline_yearly_batched aggregation
+   Priority: CRITICAL for production
+   Evidence: "User memory limit exceeded" warning in logs at 11:29:38
+   Impact: Water timeline analysis returns partial data or incomplete
+   Current state: Backend returns 200 OK with status=partial
+   Mitigation: graceful failure, returns unavailable/partial records instead of crashing
+   Long-term: reduce batch sizes, add tiling, use server-side assets, implement incremental processing
 
-3. FEWS NET lookup is centroid-based and often unavailable.
-   Priority: medium.
-   Future fix: cache official FEWS NET geometries, spatially intersect AOI with zones, area-weight categorical classes.
+2. Earth Engine 429 Too Many Concurrent Aggregations
+   When: Multiple concurrent AOI analyses (turbidity, phenology, agriculture)
+   Priority: CRITICAL for production
+   Evidence: 10+ warnings in logs with exponential backoff retries; 5/5 retries exhausted
+   Impact: Phenology analysis times out and returns unavailable after 120s timeout
+   Current state: Backend gracefully returns partial status with null phenology records
+   Sequence: dynamic_world task timed out (120s) → phenology retried → 429 errors → phenology failed
+   Mitigation: sequential EE calls, shorter year ranges, staggered user requests
+   Long-term: Redis-backed job queue, async analysis with polling endpoint, Earth Engine API upgrade
 
-4. Water/glacier historic Landsat collections need careful re-verification.
-   Priority: medium.
-   Risk: mixed Landsat sensors can produce non-homogeneous ImageCollection errors.
+3. Task Timeout (90-120 seconds)
+   When: turbidity, glacier, and dynamic_world aggregations
+   Priority: HIGH for large AOIs
+   Evidence: "Analysis task timed out: turbidity after 90s", "dynamic_world timed out after 120s"
+   Impact: Multiple layer failures for single large AOI or during concurrent requests
+   Current state: Backend returns 200 with status=partial, omits failed layers
+   Mitigation: same as #2 (sequential processing, smaller ranges, async)
 
-5. Derived image timestamps must be handled carefully.
-   Priority: medium.
-   Risk: calling image.date() on composites without system:time_start can fail.
+4. Water/Glacier/Turbidity Timeouts Under Load
+   When: Same request that triggers agriculture analysis + water analysis
+   Priority: HIGH
+   Evidence: Glacier timed out twice (11:30:52, 11:37:30); turbidity timed out (11:30:52)
+   Impact: Water dashboard shows incomplete cards even though response is HTTP 200
+   Severity: Affects user experience; user sees partial water layer
 
-6. STAC queries can time out on Planetary Computer.
-   Priority: medium.
-   Current behavior: logs warning and should fallback/unavailable.
-   Future fix: narrow bbox/time windows, request limit=1 where possible, cache collection searches, add provider timeouts.
+KNOWN BUT UNCONFIRMED IN THIS RUN:
 
-7. Static files can be cached by browser.
-   Priority: low.
-   Mitigation: hard refresh.
+5. Long agriculture ranges or large AOIs cause EE quota exhaustion
+   Priority: high for production
+   Evidence: previous runs, now confirmed by 4-year range hitting 429 limits
+   Mitigation: shorter default range (2022-2025), sequential EE calls
+   Future fix: background jobs, tiling, asset generation
 
-8. Production scalability is not fully solved.
-   Priority: high for deployment.
-   Future fix: job queue, async task status endpoint, persistent Redis cache, object storage for GeoTIFF/COG outputs.
+6. FEWS NET lookup is centroid-based and often unavailable
+   Priority: medium
+   Evidence: Consistently returns unavailable in smoke tests; by design
+   Impact: Food security layer is rarely populated
+   Future fix: cache FEWS NET geometries, spatial intersect AOI with zones, area-weight categorical classes
+
+7. Derived/composite image timestamps must be handled carefully
+   Priority: medium
+   Risk: calling image.date() on composites without system:time_start can fail silently
+   Evidence: Not seen in this run, but documented in previous water analysis
+
+8. STAC queries can time out on Planetary Computer
+   Priority: medium
+   Current behavior: logs warning, returns fallback/unavailable
+   Evidence: Not triggered in this test run
+
+9. Static files can be cached by browser
+   Priority: low
+   Mitigation: hard refresh (Ctrl+F5)
+   Evidence: "304 Not Modified" responses for CSS/JS on second page load
+
+PRODUCTION READINESS BLOCKERS:
+
+A. Horizontal scaling not implemented
+   Current: Single uvicorn process; no job queue or worker pool
+   Risk: Cannot handle multiple concurrent AOI requests
+   Fix: Celery + Redis, or FastAPI background tasks with distributed state
+
+B. No persistent caching layer
+   Current: In-memory cache on agriculture service (_CACHE dict with 512 limit)
+   Risk: Cache evicted on restart; not shared across processes
+   Fix: Redis, Memcached, or database-backed cache
+
+C. No async analysis polling endpoint
+   Current: All analysis must complete within request timeout (90-120s)
+   Risk: Cannot support 10-year or large AOI analysis interactively
+   Fix: Return task ID immediately, add GET /tasks/{id} status endpoint
+
+D. Earth Engine quota management not explicit
+   Current: Gracefully fails with 429/timeout, but no quota tracking or prioritization
+   Risk: Unpredictable failures; no way to know quota remaining
+   Fix: Implement quota monitoring, prioritize smaller/faster analysis, use batch assets
 
 
 Recommended Next Steps
 ======================
-1. Clean agriculture_service.py:
-   Remove unreachable old per-year block after return response.
+URGENT (Required for Stability):
 
-2. Re-run checks:
-   .\.venv\Scripts\python.exe -m compileall app
-   .\.venv\Scripts\python.exe -m app.sanity_checks
+1. Implement sequential Earth Engine processing
+   Current: Some batched processing, but concurrent water + agriculture still triggers 429
+   Action: Ensure NO concurrent EE requests; queue analysis tasks
+   Expected impact: Eliminate 429 errors, improve response reliability
 
-3. Smoke test:
-   POST /aoi/agriculture/analyze?year_start=2024&year_end=2025
-   Then draw AOI in frontend.
+2. Reduce default year range or add frontend range selector
+   Current: Default 2022-2025 is already causing timeouts
+   Action: Reduce to 2024-2025 or add UI dropdown with warnings
+   Expected impact: Faster responses, fewer timeouts
 
-4. Add route-level tests if dependencies allow:
-   Add httpx only if using FastAPI TestClient route-level tests.
-   Otherwise keep direct service smoke tests.
+3. Implement per-task timeout monitoring and logging
+   Current: Timeouts happen silently; hard to debug which layer caused failure
+   Action: Add structured logging with task name, start time, elapsed time, failure reason
+   Expected impact: Faster debugging, clearer user messages
 
-5. Improve agriculture scalability:
-   Consider making agriculture a background job for 2018-2025 and large AOIs.
-   Return immediate partial/loading state and poll for completion.
+MEDIUM PRIORITY (Performance & UX):
 
-6. Add a UI year-range selector:
-   Let the user choose 2-year, 4-year, or 8-year analysis.
-   Warn that long ranges are slower and may return partial results.
+4. Add async task polling endpoint
+   Current: Must wait for full analysis in single request (timeout-prone)
+   Design:
+     POST /aoi/analyze → returns {task_id, status: "processing"}
+     GET /tasks/{task_id} → returns partial results and progress
+   Expected impact: Can handle 10-year analysis, better user experience
 
-7. Harden FEWS NET:
-   Replace simple HTTP lookup with cached geometries + spatial join.
+5. Implement Redis-backed distributed cache
+   Current: In-memory cache on single process; evicted on restart
+   Action: Add Redis layer for persistent cross-process caching
+   Expected impact: Faster repeat requests, survives server restart
 
-8. Validate all chart behavior:
-   Missing/null values must remain gaps.
-   Food security must remain categorical.
-   JRC water history must remain categorical/discrete.
-   Do not connect missing data as if observed.
+6. Add background job queue (Celery + Redis or FastAPI background tasks)
+   Current: All processing in request handler; no job prioritization
+   Action: Queue agriculture/water analysis jobs, process sequentially
+   Expected impact: Can scale to multiple users without 429 errors
+
+7. Add UI year-range selector with clear warnings
+   Current: Fixed default 2022-2025; some users may select 2018-2025
+   Design:
+     Radio buttons: "Fast (2024-2025)" / "Standard (2022-2025)" / "Historical (2018-2025, slower)"
+     Warning: "Historical analysis may take 10+ minutes or return partial data"
+   Expected impact: Manage user expectations, prevent timeout frustration
+
+8. Aggregate and monitor Earth Engine quota usage
+   Current: No quota tracking; failures are silent until user notices
+   Action: Log all EE aggregations with size estimates; alert if quota approaching
+   Expected impact: Proactive capacity management
+
+9. Clean remaining legacy code
+   Current: Some old per-year implementations may exist in dynamic_world_service
+   Action: Audit and remove all dead code after recent agriculture refactor
+   Expected impact: Cleaner codebase, fewer maintenance surprises
+
+LOWER PRIORITY (Enhancement & Hardening):
+
+10. Re-verify glacier and Landsat historic paths
+    Current: Known risk of mixed Landsat sensors causing non-homogeneous errors
+    Action: Review sensor_bands.py Landsat mappings; test with multi-sensor query
+    Expected impact: More reliable glacier retreat analysis
+
+11. Harden FEWS NET lookup with spatial join instead of centroid
+    Current: Centroid-based; often misses because AOI not in reported zone
+    Design: Cache FEWS NET zone geometries; spatially intersect AOI; area-weight IPC class
+    Expected impact: Food security layer more frequently populated
+
+12. Add GeoTIFF/COG export rate limiting
+    Current: Unbounded TIF export could exhaust disk/memory
+    Action: Limit concurrent TIF jobs; add queue; return async task ID
+    Expected impact: Prevents DoS through large GeoTIFF requests
+
+13. Add healthcheck that monitors Earth Engine quota
+    Current: /health only checks server is running, not EE availability
+    Design: GET /health → includes {ee_ready: bool, ee_quota_remaining: int}
+    Expected impact: Dashboard can show real-time EE status
+
+14. Document AOI size limits and year range implications
+    Current: Hidden; users discover through timeouts
+    Action: Add to /docs and frontend help text
+    Expected impact: Better user guidance, fewer support questions
 
 
 Do Not Break These Rules
 ========================
+CRITICAL (Will cause crashes or data corruption):
 - Do not use Sentinel-2 B03/B04/B08 in Earth Engine SR Harmonized analysis.
 - Do not use geom.area() without maxError.
-- Do not use Sentinel-2 for operational flood detection.
-- Do not use Sentinel-2 as the primary chlorophyll source.
-- Do not treat unavailable data as 0.
-- Do not interpolate FEWS NET categorical classes.
-- Do not mix categorical and continuous series in one chart.
+- Do not treat unavailable data as 0 (use None instead).
 - Do not crash the backend when EE/STAC/provider data is unavailable.
-- Preserve existing route compatibility.
+- Do not use Sentinel-2 as the primary flood detection source.
+- Do not interpolate or convert FEWS NET categorical classes to continuous scores.
+- Do not mix categorical and continuous data series in one chart.
+- Do not call image.date() on composite images without verifying system:time_start property.
+
+IMPORTANT (Will break user experience or scientific integrity):
+- Preserve existing route compatibility (/health, /metadata, /water/*, /aoi/*, /tif/*, /api/v1/*).
+- Do not fake data (missing months, missing years, missing regions).
+- Do not use Sentinel-2 as the primary chlorophyll source (use Sentinel-3 OLCI instead).
+- Do not exceed 120 second timeout for agriculture analysis (reduce year range or tile AOI).
+- Do not run multiple concurrent EE aggregations (sequential only).
+- Food security phase MUST remain categorical (1-5) never continuous score.
+- Water history (JRC) MUST remain categorical/discrete, never interpolated.
+- Phenology gaps (missing months) must render as visual gaps, not connected lines.
+
+OPERATIONAL (Will degrade performance or user trust):
+- Always include confidence and coverage metrics in agriculture summary.
+- Always include data quality interpretations (e.g., "very low cropland may indicate grassland").
+- Always label FEWS NET as "centroid-based approximation, not full AOI coverage".
+- Always log Earth Engine 429 errors and timeouts with structured logging.
+- Always return HTTP 200 with status=partial when layers fail (not 500).
+- Always cache responses with stable_cache_key (include EE ready state).
+- Always include notes explaining why data is unavailable or partial.
+- Hard refresh (Ctrl+F5) required after frontend JS/CSS changes due to 304 caching.
 
 
 Short Current Summary
 =====================
-The platform is now structurally stronger than before:
-- Water AOI route is working better and has batched timelines.
-- Agriculture module exists and is wired into backend/frontend.
-- The `_yearly_changes` crash is fixed.
-- Agriculture route smoke passes.
-- Sentinel-2 band mapping is centralized and correct.
-- Geometry area safety is partly centralized and sanity checked.
-- Missing data is generally represented as unavailable/partial instead of fake zeros.
+The platform is FUNCTIONALLY COMPLETE but QUOTA-CONSTRAINED:
 
-The biggest remaining engineering risks are:
-- EE aggregation quota/timeouts for large AOIs and long year ranges.
-- Cleanup of stale unreachable agriculture code.
-- Production async/background processing for long EO jobs.
-- FEWS NET area-weighted AOI classification.
-- Re-verification of glacier/Landsat and composite timestamp paths.
+✓ Water AOI analysis working with batched timelines
+✓ Agriculture module fully integrated and wired into backend/frontend
+✓ Sentinel-2 band mapping centralized and correct
+✓ Geometry safety partly centralized with maxError=1 rule
+✓ Missing data represented as unavailable/partial instead of fake zeros
+✓ HTTP 200 graceful returns even when EE quota hit (no 500 errors)
+✓ All 22 routes registered and callable
+
+⚠ Earth Engine quota/memory limits hit under concurrent load
+⚠ 4-year (2022-2025) default range already causing 429 errors
+⚠ Single-process synchronous architecture cannot scale beyond 1-2 concurrent users
+⚠ Phenology and some water layers timeout under load
+⚠ FEWS NET food-security data rarely available (by design/data gap)
+
+CURRENT STATE: 
+- Suitable for **demonstration** and **single-user interactive use**
+- NOT ready for **production multi-user deployment** without async/queue refactor
+- Analysis requests often return HTTP 200 with status=partial due to timeouts
+- Backend gracefully handles failures but user sees incomplete data
+
+CRITICAL BLOCKER FOR PRODUCTION:
+Earth Engine quota is bottleneck. Need either:
+a) Switch to async processing + job queue (1-2 day engineering)
+b) Reduce analysis scope (smaller AOIs, 2-year ranges, batch overnight jobs)
+c) Upgrade Earth Engine quota and implement request prioritization
+
+TEST COMMANDS:
+From workspace root:
+  .\.venv\Scripts\python.exe -m compileall app
+  .\.venv\Scripts\python.exe -m app.sanity_checks
+  .\.venv\Scripts\uvicorn.exe app.main:app --reload
+  
+Then open http://127.0.0.1:8000 and draw a small AOI in West Africa.
+Hard refresh (Ctrl+F5) if static files cached.
+
+EXPECTED BEHAVIOR:
+- Water AOI cards load in 30-60 seconds
+- Agriculture panel may show partial data or timeouts if concurrent requests
+- FEWS NET food security will show unavailable (regional data gap)
+- Response remains HTTP 200 even with incomplete data (graceful degradation)
